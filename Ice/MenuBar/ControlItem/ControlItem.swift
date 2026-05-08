@@ -62,11 +62,20 @@ final class ControlItem {
     }
 
     /// The identifier of the control item's window.
+    ///
+    /// On macOS 26+, the proxy `NSWindow` for an `NSStatusItem.button.window`
+    /// reports a `windowNumber` that exceeds `UInt32.max`, so a direct
+    /// `CGWindowID(window.windowNumber)` cast traps. Use the failable
+    /// initializer and treat `0` as "no window".
     var windowID: CGWindowID? {
-        guard let window else {
+        guard
+            let window,
+            let id = CGWindowID(exactly: window.windowNumber),
+            id != 0
+        else {
             return nil
         }
-        return CGWindowID(window.windowNumber)
+        return id
     }
 
     /// A Boolean value that indicates whether the control item serves as
