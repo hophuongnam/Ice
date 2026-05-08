@@ -67,7 +67,13 @@ final class IceBarPanel: NSPanel {
                         // Only continue if the menu bar is automatically hidden, as Ice
                         // can't currently display its menu bar items.
                         appState.menuBarManager.isMenuBarHiddenBySystemUserDefaults,
-                        let info = window.flatMap({ WindowInfo(windowID: CGWindowID($0.windowNumber)) }),
+                        let info = window.flatMap({ window -> WindowInfo? in
+                            guard
+                                let id = CGWindowID(exactly: window.windowNumber),
+                                id != 0
+                            else { return nil }
+                            return WindowInfo(windowID: id)
+                        }),
                         // Window being offscreen means the menu bar is currently hidden.
                         // Close the bar, as things will start to look weird if we don't.
                         !info.isOnScreen
@@ -135,12 +141,23 @@ final class IceBarPanel: NSPanel {
 
                 guard
                     lowerBound <= upperBound,
-                    let section = appState.menuBarManager.section(withName: .visible),
-                    let windowID = section.controlItem.windowID,
-                    // Bridging.getWindowFrame is more reliable than ControlItem.windowFrame,
-                    // i.e. if the control item is offscreen.
-                    let itemFrame = Bridging.getWindowFrame(for: windowID)
+                    let section = appState.menuBarManager.section(withName: .visible)
                 else {
+                    return originForRightOfScreen
+                }
+
+                // Prefer Bridging.getWindowFrame (works for offscreen items), but on
+                // macOS 26+ the status-item windowNumber doesn't fit in CGWindowID, so
+                // fall back to the published NSWindow.frame from ControlItem.
+                let itemFrame: CGRect
+                if
+                    let windowID = section.controlItem.windowID,
+                    let frame = Bridging.getWindowFrame(for: windowID)
+                {
+                    itemFrame = frame
+                } else if let frame = section.controlItem.windowFrame {
+                    itemFrame = frame
+                } else {
                     return originForRightOfScreen
                 }
 
@@ -166,8 +183,17 @@ final class IceBarPanel: NSPanel {
             await appState.imageCache.updateCache()
         }
 
-        contentView = IceBarHostingView(appState: appState, colorManager: colorManager, screen: screen, section: section) { [weak self] in
+        let hostingView = IceBarHostingView(appState: appState, colorManager: colorManager, screen: screen, section: section) { [weak self] in
             self?.close()
+        }
+        contentView = hostingView
+
+        // Borderless panels init at 0x0 and never auto-size to their content view's
+        // intrinsic size. Force the resize so the panel has visible bounds.
+        hostingView.layoutSubtreeIfNeeded()
+        let fittingSize = hostingView.fittingSize
+        if fittingSize.width > 0 && fittingSize.height > 0 {
+            setContentSize(fittingSize)
         }
 
         updateOrigin(for: screen)
@@ -288,8 +314,11 @@ private struct IceBarContentView: View {
                 .frame(height: contentHeight)
                 .padding(.horizontal, horizontalPadding)
                 .padding(.vertical, verticalPadding)
+                // Frosted-glass backdrop ensures the bar reads as a distinct panel even
+                // when the sampled menu-bar color is near-transparent (macOS 26+).
+                .background(.regularMaterial)
                 .layoutBarStyle(appState: appState, averageColorInfo: colorManager.colorInfo)
-                .foregroundStyle(colorManager.colorInfo?.color.brightness ?? 0 > 0.67 ? .black : .white)
+                .foregroundStyle(.primary)
                 .clipShape(clipShape)
                 .shadow(color: .black.opacity(shadowOpacity), radius: 2.5)
 
@@ -384,7 +413,7 @@ private struct IceBarItemView: View {
 
     private var image: NSImage? {
         guard
-            let image = imageCache.images[item.info],
+            let image = imageCache.images[item.windowID],
             let screen = imageCache.screen
         else {
             return nil

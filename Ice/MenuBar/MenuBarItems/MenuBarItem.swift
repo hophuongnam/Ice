@@ -226,15 +226,19 @@ private extension MenuBarItemInfo {
     /// it is a valid menu bar item window. Only call this initializer if you are
     /// certain that the window is valid.
     init(uncheckedItemWindow itemWindow: WindowInfo) {
-        if let bundleIdentifier = itemWindow.owningApplication?.bundleIdentifier {
+        let title = itemWindow.title ?? ""
+        // macOS 26+ hosts all NSStatusItems out-of-process inside ControlCenter,
+        // so owningApplication.bundleIdentifier reports "com.apple.controlcenter"
+        // even for items owned by other apps (including Ice itself). Recognize
+        // Ice's control items by their unique titles to keep section delimitation
+        // working when the reported owner is wrong.
+        if ControlItem.Identifier(rawValue: title) != nil {
+            self.namespace = .ice
+        } else if let bundleIdentifier = itemWindow.owningApplication?.bundleIdentifier {
             self.namespace = Namespace(bundleIdentifier)
         } else {
             self.namespace = .null
         }
-        if let title = itemWindow.title {
-            self.title = title
-        } else {
-            self.title = ""
-        }
+        self.title = title
     }
 }
